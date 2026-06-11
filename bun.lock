@@ -1,0 +1,19 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "code-review",
+      "dependencies": {
+        "agl-ai": "link:agl-ai",
+        "js-yaml": "^4.1.0",
+      },
+    },
+  },
+  "packages": {
+    "agl-ai": ["agl-ai@link:agl-ai", {}],
+
+    "argparse": ["argparse@2.0.1", "", {}, "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="],
+
+    "js-yaml": ["js-yaml@4.2.0", "", { "dependencies": { "argparse": "^2.0.1" }, "bin": { "js-yaml": "bin/js-yaml.js" } }, "sha512-ePWsvanv0DWuDRsW8dnt+R4jQ31SCRCQ7hhNcPXZPsoBZiemuZNYGf7adZdqX2D86j6rvKp3RpCxVTSb8WQlOw=="],
+  }
+}

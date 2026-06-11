@@ -1,0 +1,22 @@
+{
+  "name": "code-review",
+  "version": "0.1.0",
+  "description": "LLM-powered code reviewer. Reads .code-review.yaml and judges code against natural-language rules.",
+  "type": "module",
+  "bin": {
+    "code-review": "./src/cli.mjs"
+  },
+  "scripts": {
+    "smoke": "bun test/smoke.mjs",
+    "test": "bun test/unit.mjs"
+  },
+  "dependencies": {
+    "agl-ai": "link:agl-ai",
+    "js-yaml": "^4.1.0"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "author": "Mike Smullin",
+  "license": "MIT"
+}

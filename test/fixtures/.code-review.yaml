@@ -1,0 +1,24 @@
+# Smoke-test fixture config for the code-review CLI.
+# Run from this directory:  cd test/fixtures && code-review
+# Expected: bad-handler.js fails both rules; the others pass.
+
+- id: no-stray-console-logs
+  description: Production source must not contain stray debug logging.
+  matches:
+    - "src/**/*.js"
+  exclude:
+    - "src/**/*.test.js"
+  prompt: |
+    This file is production source code. It must not contain stray debug
+    logging such as console.log / console.debug / console.info calls.
+    Return pass=false if any such call is present; otherwise pass=true.
+
+- id: handlers-validate-input
+  description: Every request handler must validate its input at the boundary.
+  matches:
+    - "src/handlers/**/*.js"
+  prompt: |
+    Each matched file is an HTTP request handler. It must validate or
+    sanitize externally-supplied input (e.g. req.params, req.body, req.query)
+    before using it. Return pass=true only if the handler validates its input
+    at the boundary; otherwise pass=false.
