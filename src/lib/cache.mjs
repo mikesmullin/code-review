@@ -1,16 +1,30 @@
-import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import yaml from 'js-yaml';
 
-const CACHE_DIR = '.code-review';
-const CACHE_FILE = 'report.yaml';
-
-function cachePath(baseDir) {
-  return join(baseDir, CACHE_DIR, CACHE_FILE);
+// Global LLM result cache shared across all repos on this machine.
+// Can be overridden via CODE_REVIEW_CACHE env var (used in tests).
+function globalDir() {
+  return process.env.CODE_REVIEW_CACHE
+    ? join(process.env.CODE_REVIEW_CACHE)
+    : join(homedir(), '.code-review');
 }
 
-// Build a key uniquely identifying a (rule, file) evaluation.
+export function globalCachePath() {
+  return join(globalDir(), 'cache.yaml');
+}
+
+// Per-project human-readable report (summary + results for this run).
+const LOCAL_DIR = '.code-review';
+const LOCAL_REPORT = 'report.yaml';
+
+function localReportPath(baseDir) {
+  return join(baseDir, LOCAL_DIR, LOCAL_REPORT);
+}
+
+// Build a key for the in-memory Map (scoped to a single baseDir).
 function key(ruleId, file) {
   return `${ruleId}\u0000${file}`;
 }
@@ -25,19 +39,22 @@ export function ruleFingerprint(rule) {
     .slice(0, 16);
 }
 
-// Load the cached report into a Map keyed by (rule, file). Returns an empty Map
-// when no cache exists or it cannot be parsed.
+// Load the cached results for a specific repo (baseDir) from the global cache.
+// Returns an in-memory Map keyed by (ruleId, file) — same interface as before.
 export function loadCache(baseDir) {
-  const path = cachePath(baseDir);
+  const absBase = resolve(baseDir);
   const map = new Map();
-  if (!existsSync(path)) return map;
+  const cachePath = globalCachePath();
+  if (!existsSync(cachePath)) return map;
   try {
-    const doc = yaml.load(readFileSync(path, 'utf8'));
-    for (const r of doc?.results ?? []) {
-      if (r?.rule && r?.file) map.set(key(r.rule, r.file), r);
+    const doc = yaml.load(readFileSync(cachePath, 'utf8'));
+    for (const r of doc?.entries ?? []) {
+      if (r?.base_dir === absBase && r?.rule && r?.file) {
+        map.set(key(r.rule, r.file), r);
+      }
     }
   } catch {
-    // A corrupt cache is non-fatal: treat as empty and let this run rebuild it.
+    // Corrupt global cache is non-fatal: treat as empty.
   }
   return map;
 }
@@ -62,12 +79,41 @@ export function getCached(cache, ruleId, file) {
   return cache.get(key(ruleId, file));
 }
 
-// Persist results to .code-review/report.yaml, including the metadata needed to
-// validate freshness on the next run (evaluated_at + rule fingerprint).
+// Persist results to:
+//   ~/.code-review/cache.yaml     — global LLM result cache (merged across repos)
+//   {baseDir}/.code-review/report.yaml — per-project human-readable report
 export function writeCache(baseDir, results, { elapsedMs } = {}) {
-  const dir = join(baseDir, CACHE_DIR);
-  mkdirSync(dir, { recursive: true });
+  const absBase = resolve(baseDir);
+  const cachePath = globalCachePath();
 
+  // --- global cache: merge new entries for this repo, preserve all others ---
+  let existing = [];
+  if (existsSync(cachePath)) {
+    try {
+      const doc = yaml.load(readFileSync(cachePath, 'utf8'));
+      existing = (doc?.entries ?? []).filter((r) => r?.base_dir !== absBase);
+    } catch {
+      // Corrupt global cache: start fresh.
+    }
+  }
+  const newEntries = results.map((r) => ({
+    base_dir: absBase,
+    rule: r.rule,
+    file: r.file,
+    severity: r.severity,
+    model: r.model,
+    pass: r.pass,
+    confidence: r.confidence,
+    rationale: r.rationale,
+    error: r.error,
+    ms: r.ms,
+    evaluated_at: r.evaluated_at ?? null,
+    fingerprint: r.fingerprint ?? null,
+  }));
+  mkdirSync(globalDir(), { recursive: true });
+  writeFileSync(cachePath, yaml.dump({ entries: [...existing, ...newEntries] }, { lineWidth: 100, noRefs: true }));
+
+  // --- per-project report (human-readable summary for this run) ---
   const total = results.length;
   const errored = results.filter((r) => r.error).length;
   const fails = results.filter((r) => !r.pass && !r.error);
@@ -99,5 +145,11 @@ export function writeCache(baseDir, results, { elapsedMs } = {}) {
     })),
   };
 
-  writeFileSync(cachePath(baseDir), yaml.dump(doc, { lineWidth: 100, noRefs: true }));
+  const reportDir = join(baseDir, LOCAL_DIR);
+  mkdirSync(reportDir, { recursive: true });
+  writeFileSync(localReportPath(baseDir), yaml.dump(doc, { lineWidth: 100, noRefs: true }));
+}
+
+export function clearGlobalCache() {
+  rmSync(globalCachePath(), { force: true });
 }

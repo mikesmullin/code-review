@@ -1,12 +1,12 @@
 // Unit tests for the pure (non-LLM) parts: config parsing, file resolution,
 // and report formatting. Run with:  bun test/unit.mjs
 import { join } from 'node:path';
-import { statSync, mkdtempSync, rmSync } from 'node:fs';
+import { statSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { findConfig, loadConfig } from '../src/lib/config.mjs';
 import { resolveFiles } from '../src/lib/files.mjs';
 import { formatRspec, formatYaml, exitCode } from '../src/lib/report.mjs';
-import { loadCache, getCached, isFresh, writeCache, ruleFingerprint } from '../src/lib/cache.mjs';
+import { loadCache, getCached, isFresh, writeCache, ruleFingerprint, clearGlobalCache, globalCachePath } from '../src/lib/cache.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -95,11 +95,17 @@ ok(!isFresh(undefined, cacheRule, cacheAbs), 'isFresh false when there is no cac
 
 // write -> load round trip.
 const tmpBase = mkdtempSync(join(tmpdir(), 'cr-cache-'));
+// Redirect the global cache into the temp dir so the test is self-contained.
+process.env.CODE_REVIEW_CACHE = tmpBase;
 const cacheSample = [{ rule: 'r1', file: 'a.js', severity: 'error', model: 'm', pass: true, confidence: 0.9, rationale: 'ok', error: null, ms: 5, evaluated_at: future, fingerprint: fp1 }];
 writeCache(tmpBase, cacheSample, { elapsedMs: 10 });
 const reloaded = loadCache(tmpBase);
 const got = getCached(reloaded, 'r1', 'a.js');
 ok(got && got.evaluated_at === future && got.fingerprint === fp1, 'writeCache/loadCache round trips evaluated_at and fingerprint');
+ok(existsSync(globalCachePath()), 'writeCache creates the global cache file');
+clearGlobalCache();
+ok(!existsSync(globalCachePath()), 'clearGlobalCache removes the global cache file');
+delete process.env.CODE_REVIEW_CACHE;
 rmSync(tmpBase, { recursive: true, force: true });
 
 // --- summary ----------------------------------------------------------------

@@ -8,6 +8,61 @@ export const DEFAULT_MODEL = 'copilot:claude-haiku-4.5';
 // Upper bound on tool-read file size, to protect the model's context window.
 const MAX_READ_BYTES = 256 * 1024;
 
+// ─── Progress bar ─────────────────────────────────────────────────────────────
+// Writes a live rewriting progress line to stderr. Falls back to dots when
+// stderr is not a TTY (so CI logs stay clean).
+export class Progress {
+  constructor(total) {
+    this.total   = total;
+    this.done    = 0;
+    this.cached  = 0;
+    this.fails   = 0;
+    this.startMs = Date.now();
+    this._tty    = process.stderr.isTTY;
+    this._width  = process.stderr.columns ?? 100;
+  }
+
+  tick({ cached = false, pass = true } = {}) {
+    this.done++;
+    if (cached) this.cached++;
+    if (!pass) this.fails++;
+    this._render();
+  }
+
+  _render() {
+    const elapsed = ((Date.now() - this.startMs) / 1000).toFixed(1);
+    const pct     = Math.round((this.done / this.total) * 100);
+    const remain  = this.total - this.done;
+
+    const isTTY = this._tty;
+    const cyan  = s => isTTY ? `\x1b[96m${s}\x1b[0m` : s;
+    const dim   = s => isTTY ? `\x1b[2m${s}\x1b[0m`  : s;
+    const amber = s => isTTY ? `\x1b[93m${s}\x1b[0m`  : s;
+
+    const bar = (() => {
+      const w = Math.min(20, this._width - 80);
+      if (w < 4) return '';
+      const filled = Math.round((this.done / this.total) * w);
+      return '[' + '█'.repeat(filled) + '░'.repeat(w - filled) + '] ';
+    })();
+
+    const failPart = this.fails > 0 ? amber(`${this.fails} failing`) : dim('0 failing');
+    const line = cyan(`  ${bar}${pct}% ${this.done}/${this.total} `) +
+      dim(`(${this.cached} cached · `) + failPart +
+      dim(` · ${remain} left · ${elapsed}s)`);
+
+    if (this._tty) {
+      process.stderr.write('\r' + line.slice(0, this._width + 60).padEnd(this._width));
+    } else {
+      process.stderr.write('.');
+    }
+  }
+
+  finish() {
+    process.stderr.write('\n');
+  }
+}
+
 // Register a read_file tool on the agent so a rule's prompt can pull in
 // referenced material (e.g. a conventions doc like MICROAGENT.md). Relative
 // paths resolve against the config's base directory; absolute paths are

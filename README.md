@@ -47,25 +47,60 @@ For contributors / a global `code-review` command:
 
 ```sh
 git clone <repo-url> code-review
-cd code-review
 bun install
-bun link            # exposes the global `code-review` executable
+bun link
 ```
 
 ## Usage
 
-Run it from any directory that contains a `.code-review.yaml`:
+Run it from any directory. It searches recursively for all `.code-review.yaml`
+files in the subtree and evaluates each one:
 
 ```sh
 code-review
 ```
 
-That prints a human-readable report and exits non-zero if any `error`-severity
-rule fails (so it drops cleanly into CI or an agent loop). For machine-readable
-output, alternate models, concurrency, explicit paths, and other options:
+That prints a human-readable RSpec-style report to stdout (with a live progress
+bar on stderr) and exits non-zero if any `error`-severity rule fails.
+
+### Reviewing a Pull Request
+
+Pass `--pr <url>` to automatically fetch the PR branch, clone it locally as
+`.<org>--<repo>-pr<N>/` in the current directory, then run all matching rules
+against it:
 
 ```sh
-code-review --help
+code-review --pr https://github.com/org/repo/pull/42
+```
+
+Rules from `~/.code-review.yaml` and `library/` are applied automatically
+(filtered by each rule's `repos:` list against the cloned repo's git remote).
+
+## Rule Sources
+
+Rules are loaded from three places and merged at runtime:
+
+| Source | Path | Filtered by `repos:`? |
+|--------|------|-----------------------|
+| **Local** | `.code-review.yaml` / `.code-review.yml` in the scanned subtree | No |
+| **Global** | `~/.code-review.yaml` | Yes |
+| **Library** | `library/**/*.yaml` inside the `code-review` package | Yes |
+
+The `repos:` field on a rule is a list of full HTTPS remote URLs. A rule is only
+applied to a repo whose `git remote get-url origin` matches one of those URLs.
+Rules with no `repos:` field apply everywhere.
+
+### Library rules
+
+Create `library/<org>/<repo>/my-rules.yaml` inside the `code-review` package to
+ship reusable rule sets that activate automatically when `code-review` is run
+against a matching repo:
+
+```
+library/
+  example-org/
+    example-repo/
+      rules.yaml   ← only applied to that repo
 ```
 
 ## Rule Schema
@@ -140,7 +175,7 @@ Failures:
 Finished in 32.82s
 ```
 
-> **NOTE**: (**Report caching**) Outputs are stored in `.code-review/report.yaml`, to prevent needlessly burning time/tokens. To break the cache, simply modify your code, and any rules touching that file will have their report outputs updated on the next `code-review` run.
+> **NOTE**: (**Report caching**) LLM results are cached in `~/.code-review/cache.yaml` (shared across all repos on the machine). Each entry is keyed by `(base_dir, rule, file)` and expires when the file is modified or the rule's prompt changes. A per-project human-readable report is also written to `.code-review/report.yaml`. To force a full re-evaluation, run: `code-review clean`
 
 Pass `--yaml` for a machine-readable report you can parse in scripts or CI:
 

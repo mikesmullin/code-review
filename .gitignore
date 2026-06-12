@@ -34,3 +34,6 @@ coverage/
 
 # code-review result cache (written into the reviewed project's cwd)
 .code-review/
+
+# User files
+/library/**/*.yaml
