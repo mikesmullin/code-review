@@ -129,6 +129,102 @@ export function exitCode(results) {
   return hardFail ? 1 : 0;
 }
 
+// Render results as a standalone, self-contained HTML report (no external
+// assets) suitable for writing to disk via `--html <path>` and opening in a
+// browser or attaching to a PR.
+export function formatHtml(results, { elapsedMs } = {}) {
+  const esc = (s) =>
+    String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+  const total = results.length;
+  const passed = results.filter((r) => r.pass).length;
+  const errored = results.filter((r) => r.error).length;
+  const fails = results.filter((r) => !r.pass && !r.error);
+  const warnFails = fails.filter((r) => r.severity === 'warn').length;
+  const hardFails = fails.length - warnFails;
+
+  const statusOf = (r) =>
+    r.error ? 'error' : !r.pass ? (r.severity === 'warn' ? 'warn' : 'fail') : 'pass';
+  const order = { error: 0, fail: 1, warn: 2, pass: 3 };
+  const sorted = [...results].sort(
+    (a, b) => order[statusOf(a)] - order[statusOf(b)] || a.rule.localeCompare(b.rule) || a.file.localeCompare(b.file),
+  );
+
+  const rows = sorted
+    .map((r) => {
+      const st = statusOf(r);
+      const conf = r.confidence != null ? `${Math.round(r.confidence * 100)}%` : '';
+      const ms = r.ms != null ? (r.ms >= 1000 ? `${(r.ms / 1000).toFixed(2)}s` : `${Math.round(r.ms)}ms`) : '';
+      const detail = r.error ? esc(r.error) : esc(r.rationale ?? '');
+      return `    <tr class="row ${st}">
+      <td class="st"><span class="badge ${st}">${st.toUpperCase()}</span></td>
+      <td class="conf">${esc(conf)}</td>
+      <td class="rule">${esc(r.rule)}</td>
+      <td class="file">${esc(r.file)}</td>
+      <td class="ms">${esc(ms)}</td>
+    </tr>
+    <tr class="detail ${st}"><td></td><td colspan="4">${detail}${r.model ? `<div class="model">${esc(r.model)}</div>` : ''}</td></tr>`;
+    })
+    .join('\n');
+
+  const finished = elapsedMs != null ? ` · finished in ${(elapsedMs / 1000).toFixed(2)}s` : '';
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code Review Report</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 2rem; background: #0f1115; color: #e6e6e6; }
+  h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+  .meta { color: #9aa0a6; margin-bottom: 1rem; }
+  .summary { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+  .pill { padding: .25rem .6rem; border-radius: 999px; font-weight: 600; font-size: .8rem; }
+  .pill.total { background: #1b1f27; color: #cfd3da; }
+  .pill.pass  { background: #14361f; color: #46c760; }
+  .pill.fail  { background: #3a1414; color: #e04040; }
+  .pill.warn  { background: #3a3110; color: #e2aa20; }
+  .pill.error { background: #36103a; color: #c830a0; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: .4rem .6rem; border-top: 1px solid #1f242d; vertical-align: top; }
+  tr.row td { font-weight: 500; }
+  .badge { padding: .1rem .45rem; border-radius: 4px; font-size: .72rem; font-weight: 700; }
+  .badge.pass { background: #14361f; color: #46c760; }
+  .badge.fail { background: #3a1414; color: #e04040; }
+  .badge.warn { background: #3a3110; color: #e2aa20; }
+  .badge.error { background: #36103a; color: #c830a0; }
+  .conf, .ms { color: #9aa0a6; white-space: nowrap; }
+  .file { color: #8ab4f8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
+  .rule { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
+  tr.detail td { border-top: 0; color: #c3c8cf; padding-top: 0; padding-bottom: .9rem; }
+  tr.detail.pass { display: none; }
+  .model { color: #6b7177; font-size: .75rem; margin-top: .25rem; }
+</style>
+</head>
+<body>
+  <h1>Code Review Report</h1>
+  <div class="meta">${total} ${plural(total, 'file', 'files')}${finished}</div>
+  <div class="summary">
+    <span class="pill total">${total} total</span>
+    <span class="pill pass">${passed} passed</span>
+    <span class="pill fail">${hardFails} ${plural(hardFails, 'failure', 'failures')}</span>
+    ${warnFails ? `<span class="pill warn">${warnFails} ${plural(warnFails, 'warning', 'warnings')}</span>` : ''}
+    ${errored ? `<span class="pill error">${errored} ${plural(errored, 'error', 'errors')}</span>` : ''}
+  </div>
+  <table>
+${rows}
+  </table>
+</body>
+</html>
+`;
+}
+
 function plural(n, one, many) {
   return n === 1 ? one : many;
 }
