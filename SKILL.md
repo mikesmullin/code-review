@@ -51,6 +51,26 @@ Rules with a `repos:` list are only applied when the target repo's
 `git remote get-url origin` matches one of the listed HTTPS URLs.
 Rules without `repos:` apply to every repo.
 
+### Inheriting rules from dependencies (`include:`)
+
+A local `.code-review.yaml` may be a mapping with an `include:` list of glob-star
+patterns (instead of a bare array), so a project inherits rules shipped by its
+dependencies — no symlinks:
+
+```yaml
+include:
+  - node_modules/pipeline/library/*.code-review.yaml   # framework's shared rules
+rules:
+  - id: project-specific-rule          # optional local additions / overrides
+    matches: ["src/**/*.ts"]
+    prompt: |
+      …
+```
+
+Include globs resolve against the including file's dir; the *included* rules'
+`matches`/`read_file` paths resolve against the consuming project. De-dup is by
+`id`, first-wins, so a local rule overrides an inherited one of the same id.
+
 ## Authoring `.code-review.yaml`
 
 A bare top-level YAML array of rules:

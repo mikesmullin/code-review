@@ -54,28 +54,96 @@ export function findAllConfigs(startDir = process.cwd()) {
 }
 
 // Parse and validate a .code-review.yaml file.
-// The top-level document must be a bare array of rule objects.
-// Returns { configPath, baseDir, rules } where rules are normalized.
+//
+// A config file is EITHER:
+//   • a bare array of rule objects (the original, still-supported format), OR
+//   • a mapping with optional `include:` (a list of glob-star patterns pointing
+//     at other rule files — e.g. a dependency's library/) and optional `rules:`
+//     (this file's own rules).
+//
+// `include:` lets a project inherit rules from its dependencies in a modular way
+// (no symlinks): e.g. `include: ["node_modules/pipeline/library/*.code-review.yaml"]`.
+//
+// Returns { configPath, baseDir, rules } where rules are the flattened,
+// de-duplicated result of this file plus everything it includes (recursively).
 export function loadConfig(configPath) {
   if (!configPath) {
     throw new Error('No .code-review.yaml found in the current directory or any parent.');
   }
-  const raw = readFileSync(configPath, 'utf8');
+  const baseDir = dirname(configPath);
+  const rules = collectRules(configPath, new Set(), new Set());
+  return { configPath, baseDir, rules };
+}
+
+// Read one config/rule file and recursively resolve its `include:` globs into a
+// flat, de-duplicated rule list.
+//
+// De-dup is by `id`, FIRST-WINS across the whole include graph: a file's own
+// rules are added before its includes, and earlier includes before later ones —
+// so a project can OVERRIDE an inherited rule simply by redeclaring its id
+// locally. `mergedIds` tracks ids already taken; `visited` guards against
+// include cycles / double-includes.
+//
+// Include globs resolve against the INCLUDING file's own directory. The included
+// rules' own `matches`/`read_file` paths, however, resolve later against the
+// top-level project baseDir (the consuming config's dir, set by loadConfig) —
+// which is exactly what lets a dependency ship layout-relative rules that scan
+// the consumer's source tree.
+function collectRules(configPath, mergedIds, visited) {
+  const real = resolve(configPath);
+  if (visited.has(real)) return []; // cycle / double-include guard
+  visited.add(real);
+
   let doc;
   try {
-    doc = yaml.load(raw);
+    doc = yaml.load(readFileSync(configPath, 'utf8'));
   } catch (err) {
     throw new Error(`Failed to parse ${configPath}: ${err.message}`);
   }
+  if (doc == null) return []; // empty / comment-only file
 
-  if (!Array.isArray(doc)) {
-    throw new Error(`${configPath}: top-level document must be a list of rules (a YAML array).`);
+  let ownRulesRaw;
+  let includes;
+  if (Array.isArray(doc)) {
+    ownRulesRaw = doc;
+    includes = [];
+  } else if (typeof doc === 'object') {
+    if (doc.rules != null && !Array.isArray(doc.rules)) {
+      throw new Error(`${configPath}: "rules" must be a list of rules (a YAML array).`);
+    }
+    ownRulesRaw = Array.isArray(doc.rules) ? doc.rules : [];
+    includes = toStringArray(doc.include ?? doc.includes);
+  } else {
+    throw new Error(`${configPath}: top-level document must be a list of rules, or a mapping with "include" and/or "rules".`);
   }
 
-  const baseDir = dirname(configPath);
-  const seen = new Set();
-  const rules = doc.map((rule, i) => normalizeRule(rule, i, configPath, seen));
-  return { configPath, baseDir, rules };
+  // Normalize this file's own rules first (duplicate ids WITHIN one file are a
+  // hard error — that's an author mistake, not an override).
+  const fileSeen = new Set();
+  const ownRules = ownRulesRaw.map((rule, i) => normalizeRule(rule, i, configPath, fileSeen));
+
+  const out = [];
+  for (const rule of ownRules) {
+    if (!mergedIds.has(rule.id)) {
+      mergedIds.add(rule.id);
+      out.push(rule);
+    }
+  }
+
+  // Resolve include globs relative to THIS file's directory, then recurse.
+  const fileDir = dirname(real);
+  for (const pattern of includes) {
+    let matched;
+    try {
+      matched = [...new Bun.Glob(pattern).scanSync({ cwd: fileDir, absolute: true, onlyFiles: true, followSymlinks: true })].sort();
+    } catch (err) {
+      throw new Error(`${configPath}: failed to expand include "${pattern}": ${err.message}`);
+    }
+    for (const incPath of matched) {
+      out.push(...collectRules(incPath, mergedIds, visited));
+    }
+  }
+  return out;
 }
 
 const VALID_SEVERITIES = new Set(['error', 'warn']);
